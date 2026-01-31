@@ -19,8 +19,8 @@ CAMBRIDGE AS LEVEL BUSINESS (9609) - SYLLABUS SUMMARY
 # 🟢 CONFIGURATION
 TEACHER_PIN = "3596" 
 # You can hardcode the API key here if you want students to use yours.
-# 🔴 PREVIOUS KEY EXHAUSTED. PASTE YOUR NEW KEY INSIDE THE QUOTES BELOW.
-HARDCODED_KEY = "AIzaSyAeK_ntcfGUpuhF3OQihUfZ08ZqS9RIUsM" 
+# If empty, students/teacher must enter it in the sidebar.
+HARDCODED_KEY = "" 
 
 st.set_page_config(page_title="Business Tutor", page_icon="🎓")
 
@@ -54,15 +54,16 @@ with st.sidebar:
             st.error("Incorrect PIN")
 
 # --- HELPER: RETRY LOGIC WITH FEEDBACK ---
-def generate_with_retry(model, prompt, status_container, retries=4):
+def generate_with_retry(model, prompt, status_container, retries=3):
     for i in range(retries):
         try:
             return model.generate_content(prompt)
         except Exception as e:
+            # Check for Rate Limit (429)
             if "429" in str(e):
                 if i < retries - 1:
-                    wait_time = 10 * (i + 1) # Wait 10s, 20s, 30s... (Total 60s+)
-                    status_container.warning(f"🚦 Traffic limit hit. Waiting {wait_time} seconds before retry {i+1}/{retries}...")
+                    wait_time = 5 * (i + 1) # Wait 5s, 10s...
+                    status_container.warning(f"🚦 Traffic jam... waiting {wait_time}s before retry.")
                     time.sleep(wait_time)
                     continue
             raise e # Re-raise if not 429 or retries exhausted
@@ -76,10 +77,12 @@ if prompt := st.chat_input("Ask a question..."):
 
     # Generate Response
     if not api_key:
-        st.error("Missing API Key. Please add it in the code or sidebar.")
+        st.error("Missing API Key.")
     else:
         try:
-            genai.configure(api_key=api_key)
+            # 1. Clean the key (remove spaces)
+            clean_key = api_key.strip()
+            genai.configure(api_key=clean_key)
             
             system_instruction = f"""
             You are a Cambridge Business (9609) Tutor.
@@ -96,17 +99,14 @@ if prompt := st.chat_input("Ask a question..."):
             full_prompt = f"{system_instruction}\n\nStudent Question: {prompt}"
 
             # --- ROBUST MODEL SELECTION ---
-            # List of models to try in order of preference/stability
+            # Added 2.0-flash-exp (often works when 1.5 is quota limited) and 8b (lightweight)
             candidate_models = [
+                "gemini-2.0-flash-exp",
                 "gemini-1.5-flash",
-                "gemini-1.5-flash-latest",
-                "gemini-1.5-flash-001",
                 "gemini-1.5-flash-002",
                 "gemini-1.5-flash-8b",
                 "gemini-1.5-pro",
-                "gemini-1.5-pro-latest",
-                "gemini-pro",
-                "gemini-1.0-pro"
+                "gemini-pro"
             ]
             
             # Try to fetch models available to this specific key to prioritize them
@@ -123,10 +123,11 @@ if prompt := st.chat_input("Ask a question..."):
 
             response = None
             last_error = None
+            success_model = None
 
             with st.chat_message("assistant"):
                 # Use a status container to show progress/retries
-                with st.status("Thinking...", expanded=True) as status:
+                with st.status("Connecting to AI...", expanded=True) as status:
                     # Loop through models until one works
                     for model_name in candidate_models:
                         try:
@@ -135,28 +136,31 @@ if prompt := st.chat_input("Ask a question..."):
                             # Attempt generation with retry
                             result = generate_with_retry(model, full_prompt, status)
                             response = result
-                            status.update(label="Done!", state="complete", expanded=False)
+                            success_model = model_name
+                            status.update(label=f"Connected! ({model_name})", state="complete", expanded=False)
                             break # Success! Exit loop
                         except Exception as e:
                             last_error = e
+                            error_str = str(e).lower()
                             # If it's a 404 (Not Found) or 400 (Bad Request), try next model immediately
-                            if "404" in str(e) or "not found" in str(e).lower() or "400" in str(e):
+                            if "404" in error_str or "not found" in error_str or "400" in error_str:
                                 continue
-                            # If it's a 429 (Quota) and we ran out of retries, break loop
-                            if "429" in str(e):
-                                break
+                            # If it's a 429 (Quota), we TRY the next model too, because different models sometimes have different quotas!
+                            if "429" in error_str:
+                                status.write(f"{model_name} busy, trying next...")
+                                continue
                             continue
 
                     if response:
                         st.markdown(response.text)
                         st.session_state.messages.append({"role": "assistant", "content": response.text})
                     else:
-                        status.update(label="Failed", state="error")
-                        if "429" in str(last_error):
-                            st.error("🚦 Daily Quota Exceeded. The API Key has hit its limit for today. Please use a fresh key.")
+                        status.update(label="Connection Failed", state="error")
+                        if last_error and "429" in str(last_error):
+                            st.error("🚦 Daily Quota Exceeded for ALL models. Please use a fresh API Key.")
                         else:
-                            st.error(f"Unable to connect to AI. Last Error: {str(last_error)}")
-                            st.caption("Troubleshooting: Ensure your API Key has 'Generative Language API' enabled in Google Cloud Console.")
+                            st.error(f"Unable to connect. Last Error: {str(last_error)}")
+                            st.caption("Troubleshooting: Ensure your API Key is valid and has 'Generative Language API' enabled.")
                         
         except Exception as e:
             st.error(f"Configuration Error: {str(e)}")
