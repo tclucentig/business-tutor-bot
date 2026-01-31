@@ -18,9 +18,9 @@ CAMBRIDGE AS LEVEL BUSINESS (9609) - SYLLABUS SUMMARY
 
 # 🟢 CONFIGURATION
 TEACHER_PIN = "3596" 
-# You can hardcode the API key here if you want students to use yours, 
-# or leave it empty to force them to enter one.
-HARDCODED_KEY = "AIzaSyCK6iyiKdhEvEBRlnahcpRAHYKKpqJOC3I" 
+# You can hardcode the API key here if you want students to use yours.
+# 🔴 PREVIOUS KEY EXHAUSTED. PASTE YOUR NEW KEY INSIDE THE QUOTES BELOW.
+HARDCODED_KEY = "AIzaSyAeK_ntcfGUpuhF3OQihUfZ08ZqS9RIUsM" 
 
 st.set_page_config(page_title="Business Tutor", page_icon="🎓")
 
@@ -40,6 +40,7 @@ with st.sidebar:
         api_key = st.text_input("Enter Google API Key", type="password")
         if not api_key:
             st.warning("Please enter an API Key to start.")
+            st.caption("Get a free key at: https://aistudio.google.com/app/apikey")
 
     st.divider()
     
@@ -75,7 +76,7 @@ if prompt := st.chat_input("Ask a question..."):
 
     # Generate Response
     if not api_key:
-        st.error("Missing API Key.")
+        st.error("Missing API Key. Please add it in the code or sidebar.")
     else:
         try:
             genai.configure(api_key=api_key)
@@ -155,7 +156,7 @@ if prompt := st.chat_input("Ask a question..."):
                             st.error("🚦 Daily Quota Exceeded. The API Key has hit its limit for today. Please use a fresh key.")
                         else:
                             st.error(f"Unable to connect to AI. Last Error: {str(last_error)}")
-                            st.caption("Troubleshooting: Ensure your API Key has 'Generative Language API' enabled.")
+                            st.caption("Troubleshooting: Ensure your API Key has 'Generative Language API' enabled in Google Cloud Console.")
                         
         except Exception as e:
             st.error(f"Configuration Error: {str(e)}")
