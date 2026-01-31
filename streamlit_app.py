@@ -63,20 +63,39 @@ if prompt := st.chat_input("Ask a question..."):
     if not api_key:
         st.error("Missing API Key.")
     else:
-        response_text = None
-        last_error = None
-        
-        # List of models to try in case of 404 errors
-        candidate_models = [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-001",
-            "gemini-1.5-flash-002",
-            "gemini-1.5-pro",
-            "gemini-pro"
-        ]
-
         try:
             genai.configure(api_key=api_key)
+            
+            # --- AUTO-DISCOVERY LOGIC ---
+            # Instead of guessing models that might 404, we ask Google what is available for this Key.
+            target_model_name = "gemini-1.5-flash" # Default fallback
+            
+            try:
+                available_models = []
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        available_models.append(m.name)
+                
+                # Logic to pick the best available model
+                if available_models:
+                    # Check for Flash 1.5 first (Fastest/Cheapest)
+                    if "models/gemini-1.5-flash" in available_models:
+                        target_model_name = "gemini-1.5-flash"
+                    # Check for Pro 1.5 (Smarter)
+                    elif "models/gemini-1.5-pro" in available_models:
+                        target_model_name = "gemini-1.5-pro"
+                    # Check for Standard Pro
+                    elif "models/gemini-pro" in available_models:
+                        target_model_name = "gemini-pro"
+                    else:
+                        # If none of the above, take the first valid one found
+                        target_model_name = available_models[0].replace("models/", "")
+            except Exception as e:
+                # If listing fails, we just proceed with the default and hope for the best
+                pass
+            # ----------------------------
+
+            model = genai.GenerativeModel(target_model_name)
             
             system_instruction = f"""
             You are a Cambridge Business (9609) Tutor.
@@ -93,28 +112,14 @@ if prompt := st.chat_input("Ask a question..."):
             full_prompt = f"{system_instruction}\n\nStudent Question: {prompt}"
 
             with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    # Try models one by one
-                    for model_name in candidate_models:
-                        try:
-                            # print(f"Trying model: {model_name}") 
-                            model = genai.GenerativeModel(model_name)
-                            response = model.generate_content(full_prompt)
-                            response_text = response.text
-                            break # It worked! Exit loop.
-                        except Exception as e:
-                            last_error = e
-                            continue # Try next model
-
-                    if response_text:
-                        st.markdown(response_text)
-                        st.session_state.messages.append({"role": "assistant", "content": response_text})
-                    else:
-                        st.error(f"Unable to connect to AI. Last Error: {str(last_error)}")
-                        st.info("Troubleshooting: Ensure your API Key is valid and has 'Generative Language API' enabled in Google Cloud Console.")
+                with st.spinner(f"Thinking (using {target_model_name})..."):
+                    response = model.generate_content(full_prompt)
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
                         
         except Exception as e:
-            st.error(f"Configuration Error: {str(e)}")
+            st.error(f"Connection Error: {str(e)}")
+            st.info("Troubleshooting: If this persists, please regenerate your API Key in Google AI Studio ensuring 'Generative Language API' is enabled.")
 
 # Display Message History
 for msg in st.session_state.messages:
