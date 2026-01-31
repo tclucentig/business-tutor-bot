@@ -20,7 +20,7 @@ CAMBRIDGE AS LEVEL BUSINESS (9609) - SYLLABUS SUMMARY
 TEACHER_PIN = "3596" 
 # You can hardcode the API key here if you want students to use yours.
 # If empty, students/teacher must enter it in the sidebar.
-HARDCODED_KEY = "" 
+HARDCODED_KEY = "AIzaSyAeK_ntcfGUpuhF3OQihUfZ08ZqS9RIUsM" 
 
 st.set_page_config(page_title="Business Tutor", page_icon="🎓")
 
