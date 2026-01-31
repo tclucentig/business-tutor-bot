@@ -1,5 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
+import time
 
 # ==========================================
 # 🟢 TEACHER: PASTE YOUR 100 PAGES BELOW
@@ -18,8 +19,7 @@ CAMBRIDGE AS LEVEL BUSINESS (9609) - SYLLABUS SUMMARY
 # 🟢 CONFIGURATION
 TEACHER_PIN = "3596" 
 # You can hardcode the API key here if you want students to use yours, 
-# or leave it empty to force them to enter one (not recommended for students).
-# Example: HARDCODED_KEY = "AIzaSy..."
+# or leave it empty to force them to enter one.
 HARDCODED_KEY = "AIzaSyCK6iyiKdhEvEBRlnahcpRAHYKKpqJOC3I" 
 
 st.set_page_config(page_title="Business Tutor", page_icon="🎓")
@@ -52,6 +52,18 @@ with st.sidebar:
         elif pin:
             st.error("Incorrect PIN")
 
+# --- HELPER: RETRY LOGIC ---
+def generate_with_retry(model, prompt, retries=3):
+    for i in range(retries):
+        try:
+            return model.generate_content(prompt)
+        except Exception as e:
+            if "429" in str(e):
+                if i < retries - 1:
+                    time.sleep(2 * (i + 1)) # Wait 2s, then 4s...
+                    continue
+            raise e # Re-raise if not 429 or retries exhausted
+
 # --- MAIN CHAT LOGIC ---
 if prompt := st.chat_input("Ask a question..."):
     # Show user message
@@ -67,33 +79,24 @@ if prompt := st.chat_input("Ask a question..."):
             genai.configure(api_key=api_key)
             
             # --- AUTO-DISCOVERY LOGIC ---
-            # Instead of guessing models that might 404, we ask Google what is available for this Key.
-            target_model_name = "gemini-1.5-flash" # Default fallback
+            target_model_name = "gemini-1.5-flash" # Default
             
             try:
+                # Try to list models to find the best available one
                 available_models = []
                 for m in genai.list_models():
                     if 'generateContent' in m.supported_generation_methods:
                         available_models.append(m.name)
                 
-                # Logic to pick the best available model
                 if available_models:
-                    # Check for Flash 1.5 first (Fastest/Cheapest)
                     if "models/gemini-1.5-flash" in available_models:
                         target_model_name = "gemini-1.5-flash"
-                    # Check for Pro 1.5 (Smarter)
                     elif "models/gemini-1.5-pro" in available_models:
                         target_model_name = "gemini-1.5-pro"
-                    # Check for Standard Pro
                     elif "models/gemini-pro" in available_models:
                         target_model_name = "gemini-pro"
-                    else:
-                        # If none of the above, take the first valid one found
-                        target_model_name = available_models[0].replace("models/", "")
-            except Exception as e:
-                # If listing fails, we just proceed with the default and hope for the best
-                pass
-            # ----------------------------
+            except:
+                pass # Fallback to default if list_models fails (common with restricted keys)
 
             model = genai.GenerativeModel(target_model_name)
             
@@ -112,14 +115,22 @@ if prompt := st.chat_input("Ask a question..."):
             full_prompt = f"{system_instruction}\n\nStudent Question: {prompt}"
 
             with st.chat_message("assistant"):
-                with st.spinner(f"Thinking (using {target_model_name})..."):
-                    response = model.generate_content(full_prompt)
+                with st.spinner(f"Thinking..."):
+                    # Use our new retry function
+                    response = generate_with_retry(model, full_prompt)
                     st.markdown(response.text)
                     st.session_state.messages.append({"role": "assistant", "content": response.text})
                         
         except Exception as e:
-            st.error(f"Connection Error: {str(e)}")
-            st.info("Troubleshooting: If this persists, please regenerate your API Key in Google AI Studio ensuring 'Generative Language API' is enabled.")
+            if "429" in str(e):
+                st.error("🚦 Traffic Limit Hit. Please wait 1 minute and try again.")
+            else:
+                st.error(f"Connection Error: {str(e)}")
+            
+            # Diagnostic info
+            with st.expander("Troubleshooting Details"):
+                st.write(f"Model used: {target_model_name}")
+                st.write(f"Error details: {str(e)}")
 
 # Display Message History
 for msg in st.session_state.messages:
