@@ -78,28 +78,6 @@ if prompt := st.chat_input("Ask a question..."):
         try:
             genai.configure(api_key=api_key)
             
-            # --- AUTO-DISCOVERY LOGIC ---
-            target_model_name = "gemini-1.5-flash" # Default
-            
-            try:
-                # Try to list models to find the best available one
-                available_models = []
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        available_models.append(m.name)
-                
-                if available_models:
-                    if "models/gemini-1.5-flash" in available_models:
-                        target_model_name = "gemini-1.5-flash"
-                    elif "models/gemini-1.5-pro" in available_models:
-                        target_model_name = "gemini-1.5-pro"
-                    elif "models/gemini-pro" in available_models:
-                        target_model_name = "gemini-pro"
-            except:
-                pass # Fallback to default if list_models fails (common with restricted keys)
-
-            model = genai.GenerativeModel(target_model_name)
-            
             system_instruction = f"""
             You are a Cambridge Business (9609) Tutor.
             
@@ -114,23 +92,70 @@ if prompt := st.chat_input("Ask a question..."):
             
             full_prompt = f"{system_instruction}\n\nStudent Question: {prompt}"
 
+            # --- ROBUST MODEL SELECTION ---
+            # List of models to try in order of preference/stability
+            candidate_models = [
+                "gemini-1.5-flash",
+                "gemini-1.5-flash-latest",
+                "gemini-1.5-flash-001",
+                "gemini-1.5-flash-002",
+                "gemini-1.5-flash-8b",
+                "gemini-1.5-pro",
+                "gemini-1.5-pro-latest",
+                "gemini-1.5-pro-001",
+                "gemini-pro",
+                "gemini-1.0-pro"
+            ]
+            
+            # Try to fetch models available to this specific key to prioritize them
+            try:
+                available_on_key = [m.name.replace("models/", "") for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                if available_on_key:
+                    # Put available models at the start of the list
+                    candidate_models = available_on_key + candidate_models
+            except Exception:
+                pass # If listing fails (permissions), rely on the hardcoded candidate list
+
+            # Remove duplicates
+            candidate_models = list(dict.fromkeys(candidate_models))
+
+            response = None
+            last_error = None
+            success_model = None
+
             with st.chat_message("assistant"):
                 with st.spinner(f"Thinking..."):
-                    # Use our new retry function
-                    response = generate_with_retry(model, full_prompt)
-                    st.markdown(response.text)
-                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    # Loop through models until one works
+                    for model_name in candidate_models:
+                        try:
+                            model = genai.GenerativeModel(model_name)
+                            # Attempt generation
+                            result = generate_with_retry(model, full_prompt)
+                            response = result
+                            success_model = model_name
+                            break # Success! Exit loop
+                        except Exception as e:
+                            last_error = e
+                            # If it's a 404 (Not Found) or 400 (Bad Request), try next model
+                            if "404" in str(e) or "not found" in str(e).lower() or "400" in str(e):
+                                continue
+                            # If it's a 429 (Quota), break and show error (retrying other models won't help quota)
+                            if "429" in str(e):
+                                break
+                            continue
+
+                    if response:
+                        st.markdown(response.text)
+                        st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    else:
+                        if "429" in str(last_error):
+                            st.error("🚦 Traffic Limit Hit (429). Please wait 1 minute and try again.")
+                        else:
+                            st.error(f"Unable to connect to AI. Last Error: {str(last_error)}")
+                            st.caption("Troubleshooting: Ensure your API Key has 'Generative Language API' enabled in Google Cloud Console.")
                         
         except Exception as e:
-            if "429" in str(e):
-                st.error("🚦 Traffic Limit Hit. Please wait 1 minute and try again.")
-            else:
-                st.error(f"Connection Error: {str(e)}")
-            
-            # Diagnostic info
-            with st.expander("Troubleshooting Details"):
-                st.write(f"Model used: {target_model_name}")
-                st.write(f"Error details: {str(e)}")
+            st.error(f"Configuration Error: {str(e)}")
 
 # Display Message History
 for msg in st.session_state.messages:
