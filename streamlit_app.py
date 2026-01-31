@@ -52,15 +52,17 @@ with st.sidebar:
         elif pin:
             st.error("Incorrect PIN")
 
-# --- HELPER: RETRY LOGIC ---
-def generate_with_retry(model, prompt, retries=3):
+# --- HELPER: RETRY LOGIC WITH FEEDBACK ---
+def generate_with_retry(model, prompt, status_container, retries=4):
     for i in range(retries):
         try:
             return model.generate_content(prompt)
         except Exception as e:
             if "429" in str(e):
                 if i < retries - 1:
-                    time.sleep(2 * (i + 1)) # Wait 2s, then 4s...
+                    wait_time = 10 * (i + 1) # Wait 10s, 20s, 30s... (Total 60s+)
+                    status_container.warning(f"🚦 Traffic limit hit. Waiting {wait_time} seconds before retry {i+1}/{retries}...")
+                    time.sleep(wait_time)
                     continue
             raise e # Re-raise if not 429 or retries exhausted
 
@@ -102,7 +104,6 @@ if prompt := st.chat_input("Ask a question..."):
                 "gemini-1.5-flash-8b",
                 "gemini-1.5-pro",
                 "gemini-1.5-pro-latest",
-                "gemini-1.5-pro-001",
                 "gemini-pro",
                 "gemini-1.0-pro"
             ]
@@ -114,32 +115,33 @@ if prompt := st.chat_input("Ask a question..."):
                     # Put available models at the start of the list
                     candidate_models = available_on_key + candidate_models
             except Exception:
-                pass # If listing fails (permissions), rely on the hardcoded candidate list
+                pass 
 
             # Remove duplicates
             candidate_models = list(dict.fromkeys(candidate_models))
 
             response = None
             last_error = None
-            success_model = None
 
             with st.chat_message("assistant"):
-                with st.spinner(f"Thinking..."):
+                # Use a status container to show progress/retries
+                with st.status("Thinking...", expanded=True) as status:
                     # Loop through models until one works
                     for model_name in candidate_models:
                         try:
+                            # status.write(f"Trying model: {model_name}...")
                             model = genai.GenerativeModel(model_name)
-                            # Attempt generation
-                            result = generate_with_retry(model, full_prompt)
+                            # Attempt generation with retry
+                            result = generate_with_retry(model, full_prompt, status)
                             response = result
-                            success_model = model_name
+                            status.update(label="Done!", state="complete", expanded=False)
                             break # Success! Exit loop
                         except Exception as e:
                             last_error = e
-                            # If it's a 404 (Not Found) or 400 (Bad Request), try next model
+                            # If it's a 404 (Not Found) or 400 (Bad Request), try next model immediately
                             if "404" in str(e) or "not found" in str(e).lower() or "400" in str(e):
                                 continue
-                            # If it's a 429 (Quota), break and show error (retrying other models won't help quota)
+                            # If it's a 429 (Quota) and we ran out of retries, break loop
                             if "429" in str(e):
                                 break
                             continue
@@ -148,11 +150,12 @@ if prompt := st.chat_input("Ask a question..."):
                         st.markdown(response.text)
                         st.session_state.messages.append({"role": "assistant", "content": response.text})
                     else:
+                        status.update(label="Failed", state="error")
                         if "429" in str(last_error):
-                            st.error("🚦 Traffic Limit Hit (429). Please wait 1 minute and try again.")
+                            st.error("🚦 Daily Quota Exceeded. The API Key has hit its limit for today. Please use a fresh key.")
                         else:
                             st.error(f"Unable to connect to AI. Last Error: {str(last_error)}")
-                            st.caption("Troubleshooting: Ensure your API Key has 'Generative Language API' enabled in Google Cloud Console.")
+                            st.caption("Troubleshooting: Ensure your API Key has 'Generative Language API' enabled.")
                         
         except Exception as e:
             st.error(f"Configuration Error: {str(e)}")
